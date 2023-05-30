@@ -3,13 +3,14 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import PointCloud2, LaserScan
+from geometry_msgs.msg import PoseStamped
 import numpy as np
-from skimage.morphology import skeletonize, medial_axis
+from skimage.morphology import skeletonize, medial_axis, thin
 from scipy.spatial import distance as d
 from scipy.spatial.distance import cdist
 from scipy import ndimage
 from std_msgs.msg import Header
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy
 import time
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
@@ -28,29 +29,42 @@ class CenterLine(Node):
     def __init__(self):
         super().__init__('centerline')
 
+        self.get_logger().info('init done')
+        qos_profile = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+
         self.publisher = self.create_publisher(PointCloud2, '/path', 1)
         self.publisher2 = self.create_publisher(PointCloud2, '/scan2cloud', 1)
         self.publisher3 = self.create_publisher(OccupancyGrid, '/grid_augmented', 1)
-        qos_profile = QoSProfile(depth=1)
+        # qos_profile = QoSProfile(depth=1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, qos=qos_profile)
+
+        self.get_logger().info('publishers started')
 
         time.sleep(0.5)
 
         self.subscription = self.create_subscription(
+            PoseStamped,
+            '/cartographer/tracked_pose',
+            self.callback3,
+            qos_profile=qos_profile)
+
+        self.subscription = self.create_subscription(
             OccupancyGrid,
             '/cartographer/map',
-            self.callback,
-            1)
+            self.callback, 1)
         self.subscription2 = self.create_subscription(
             LaserScan,
             '/scan',
             self.callback2,
-            1)
+            qos_profile=qos_profile)
         self.subscription  # prevent unused variable warning
         self.laser = None
         self.scans_received = 0
         self.map = None
+        self.last_pose = None
+
+        self.get_logger().info('node started')
 
         time.sleep(5.0)
 
@@ -60,7 +74,7 @@ class CenterLine(Node):
         self.map = map
 
     def trajectory_timer(self):
-        if self.map is None or self.laser is None:
+        if self.map is None or self.laser is None or self.last_pose is None:
             return
         t0 = time.time()
         #Prevedeni 1D pole na 2D
@@ -98,7 +112,7 @@ class CenterLine(Node):
         coords = coords[:, np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1])]
         try: 
             obstacles[coords[0,:],coords[1,:]] = 1
-            obstacles = ndimage.binary_dilation(obstacles, iterations=6).astype(obstacles.dtype)
+            obstacles = ndimage.binary_dilation(obstacles, iterations=4).astype(obstacles.dtype)
             image = np.clip(image+obstacles,0,1)
         except:
             self.get_logger().error('index error')
@@ -106,26 +120,26 @@ class CenterLine(Node):
             self.get_logger().error(str([np.min(coords[0,:]), np.max(coords[0,:])])) 
             self.get_logger().error(str([np.min(coords[1,:]), np.max(coords[1,:])])) 
 
-        aug_list = (99*obstacles).T.reshape([meta.height*meta.width]).tolist()
+        #Dilatace prekazek
+        image = ndimage.binary_dilation(image, iterations=4).astype(image.dtype)
+
+        aug_list = (99*image).T.reshape([meta.height*meta.width]).tolist()
         o = OccupancyGrid()
         o.header.stamp = rclpy.clock.Clock().now().to_msg()
         o.header.frame_id = "map"
         o.info = meta
         o.data = aug_list
         self.publisher3.publish(o)
-
-        #Dilatace prekazek
-        image = ndimage.binary_dilation(image, iterations=8).astype(image.dtype)
         
         #Vytvoreni skeletonu
         image = np.logical_not(image)
-        skeleton = skeletonize(image).astype(np.uint16)
+        skeleton = skeletonize(image).astype(np.uint16).T
 
         #smooth-out the skeleton and remove small branches
         #skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
         #skeleton = skeletonize(skeleton).astype(np.uint16)
-        skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
-        skeleton = skeletonize(skeleton).astype(np.uint16).T
+        # skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
+        # skeleton = skeletonize(skeleton).astype(np.uint16).T
 
         #Priprava skeletonu pro nasledne serazeni
         id = np.nonzero(skeleton)
@@ -150,6 +164,8 @@ class CenterLine(Node):
         # self.get_logger().info("Done! %f" % (t1-t0))
 
     def callback2(self, msg):
+        if self.last_pose is None:
+            return
         t0 = time.time()
         #self.scans_received += 1
         #if self.scans_received != DROP_EVERY_N:
@@ -177,28 +193,46 @@ class CenterLine(Node):
         cloud = pc2.create_cloud_xyz32(h, points.T.tolist())
         self.publisher2.publish(cloud)
 
-        try:
-            trans = self.tf_buffer.lookup_transform("map", "laser", rclpy.time.Time())
-        except TransformException as e:
-            self.get_logger().error(str(e))
-            return
+        # try:
+        #     # trans = self.tf_buffer.lookup_transform("map", "laser", rclpy.time.Time())
+        #     trans = self.tf_buffer.lookup_transform("map", "laser", msg.header.stamp)
+        # except TransformException as e:
+        #     self.get_logger().error(str(e))
+        #     return
+        # q = (
+        #     trans.transform.rotation.w,
+        #     trans.transform.rotation.x,
+        #     trans.transform.rotation.y,
+        #     trans.transform.rotation.z
+        # )
+        # euler = quat2euler(q)
+        # roll, pitch, yaw = euler
+        # c = np.cos(yaw)
+        # s = np.sin(yaw)
+        # x = trans.transform.translation.x
+        # y = trans.transform.translation.y
+
         q = (
-            trans.transform.rotation.w,
-            trans.transform.rotation.x,
-            trans.transform.rotation.y,
-            trans.transform.rotation.z
+            self.last_pose.orientation.w,
+            self.last_pose.orientation.x,
+            self.last_pose.orientation.y,
+            self.last_pose.orientation.z
         )
         euler = quat2euler(q)
         roll, pitch, yaw = euler
         c = np.cos(yaw)
         s = np.sin(yaw)
-        x = trans.transform.translation.x
-        y = trans.transform.translation.y
+        x = self.last_pose.position.x
+        y = self.last_pose.position.y
+
         tf = np.array([[c,-s,0,x],[s,c,0,y],[0,0,1,0],[0,0,0,1]])
         points_h = np.concatenate((points, np.ones((1,points.shape[1]))))
         self.laser = np.matmul(tf,points_h)
         t1 = time.time()
         self.get_logger().info("Done! %f" % (t1-t0))
+
+    def callback3(self, msg):
+        self.last_pose = msg.pose
 
 
 def DistMatrix(x): #vypocet matice urcujici vzdalenosti mezi jednotlivymi body
