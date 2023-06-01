@@ -22,6 +22,7 @@ import torch
 
 SAVE_PATH=False
 DROP_EVERY_N = 4
+PUBLISH_DEBUG = False
 
 
 class CenterLine(Node):
@@ -121,15 +122,16 @@ class CenterLine(Node):
             self.get_logger().error(str([np.min(coords[1,:]), np.max(coords[1,:])])) 
 
         #Dilatace prekazek
-        image = ndimage.binary_dilation(image, iterations=4).astype(image.dtype)
+        image = ndimage.binary_dilation(image, iterations=10).astype(image.dtype)
 
-        aug_list = (99*image).T.reshape([meta.height*meta.width]).tolist()
-        o = OccupancyGrid()
-        o.header.stamp = rclpy.clock.Clock().now().to_msg()
-        o.header.frame_id = "map"
-        o.info = meta
-        o.data = aug_list
-        self.publisher3.publish(o)
+        if PUBLISH_DEBUG:
+            aug_list = (99*image).T.reshape([meta.height*meta.width]).tolist()
+            o = OccupancyGrid()
+            o.header.stamp = rclpy.clock.Clock().now().to_msg()
+            o.header.frame_id = "map"
+            o.info = meta
+            o.data = aug_list
+            self.publisher3.publish(o)
         
         #Vytvoreni skeletonu
         image = np.logical_not(image)
