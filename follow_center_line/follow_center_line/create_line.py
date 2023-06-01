@@ -19,9 +19,10 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from transforms3d.euler import quat2euler
 import torch
+from visualization_msgs.msg import Marker
 
 SAVE_PATH=False
-DROP_EVERY_N = 4
+PUBLISH_DEBUG = True
 
 
 class CenterLine(Node):
@@ -35,6 +36,7 @@ class CenterLine(Node):
         self.publisher = self.create_publisher(PointCloud2, '/path', 1)
         self.publisher2 = self.create_publisher(PointCloud2, '/scan2cloud', 1)
         self.publisher3 = self.create_publisher(OccupancyGrid, '/grid_augmented', 1)
+        self.publisher4=self.create_publisher(Marker, '/lookPoint',1)
         # qos_profile = QoSProfile(depth=1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, qos=qos_profile)
@@ -60,20 +62,29 @@ class CenterLine(Node):
             qos_profile=qos_profile)
         self.subscription  # prevent unused variable warning
         self.laser = None
-        self.scans_received = 0
         self.map = None
         self.last_pose = None
+        self.marker=Marker()
+        self.marker.header.frame_id = "map"
+        self.marker.type = Marker.SPHERE
+        self.marker.action = Marker.ADD
+        self.marker.pose.position.z = 0.
+        self.marker.scale.x = 0.3
+        self.marker.scale.y = 0.3
+        self.marker.scale.z = 0.3
+        self.marker.color.a = 1.0
+        self.marker.color.r = 0.0
+        self.marker.color.g = 1.0
+        self.marker.color.b = 0.0
 
         self.get_logger().info('node started')
 
         time.sleep(5.0)
 
-        self.timer = self.create_timer(0.1, self.trajectory_timer)
+        self.timer = self.create_timer(0.1, self.EDF)
 
-    def callback(self, map):
-        self.map = map
-
-    def trajectory_timer(self):
+    def EDF(self):
+        self.lock.acquire(blocking=True,timeout=-1)
         if self.map is None or self.laser is None or self.last_pose is None:
             return
         t0 = time.time()
@@ -81,7 +92,9 @@ class CenterLine(Node):
         map = self.map
         l = self.map.data
         meta = self.map.info
-        
+        pose = self.last_pose
+        self.lock.release()
+
         # prevedeni laser scanu do souradnic mapy #############################
         origin = meta.origin.position
         #get the direction
@@ -99,6 +112,116 @@ class CenterLine(Node):
         coords = coords.astype(int)
         #######################################################################
 
+        # vytvoreni gridu a dokresleni prekazek ###############################
+        arr = np.array(l)
+        grid = arr.reshape((meta.height,meta.width)).T
+        image = np.ones_like(grid)*255.
+        image[np.logical_or(grid>=20, grid==-1)] = 0.
+
+        #pridej body ze scanu do mapy
+        obstacles = np.zeros_like(image)
+        coords = coords[:, np.logical_and(np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1]),np.logical_and(coords[0,:]>=0, coords[1,:]>=0))]
+        #FIXME: spatne indexy skoro v kazdem behu, proc jsou vypoctene souradnice zaporne? (i treba -300)
+        try:
+            obstacles[coords[0,:],coords[1,:]] = 1
+            obstacles = ndimage.binary_dilation(obstacles, iterations=10).astype(obstacles.dtype)
+            image[obstacles==1] = 0.
+        except:
+            self.get_logger().error('index error')
+            self.get_logger().error(str(image.shape)) 
+            self.get_logger().error(str([np.min(coords[0,:]), np.max(coords[0,:])])) 
+            self.get_logger().error(str([np.min(coords[1,:]), np.max(coords[1,:])]))
+        #######################################################################
+
+        # CDT a publikovani gridu #############################################
+        cdt= ndimage.distance_transform_cdt(image, metric='chessboard')
+
+        aug_list = ((cdt/np.max(cdt))*99).astype(int).T.reshape([meta.height*meta.width]).tolist()
+        o = OccupancyGrid()
+        o.header.stamp = rclpy.clock.Clock().now().to_msg()
+        o.header.frame_id = "map"
+        o.info = meta
+        o.data = aug_list
+        self.publisher3.publish(o)
+        #######################################################################
+
+        # urceni pozice robota v gridu ########################################
+        direction = np.array([[pose.position.x],[pose.position.y]])-np.array([[origin.x],[origin.y]])
+        theta = 2*np.arccos(meta.origin.orientation.w)
+        direction = np.matmul(R,direction)
+        coords = direction//meta.resolution
+        coords = coords.astype(int)
+
+        quat = pose.orientation
+        q = (quat.w, quat.x, quat.y, quat.z)
+        euler = quat2euler(q)
+        roll, pitch, yaw = euler
+        #######################################################################
+
+        # nalezeni lookahead pointu ###########################################
+        numberGrid=30
+        angle = np.arange(-np.pi/4, np.pi/4, 0.1)
+        best_value = 0
+        # best_steer = None
+        bestX=0.0
+        bestY=0.0
+        for ang in angle.tolist():
+            x = int(np.cos(ang + yaw)*numberGrid+coords[0] )
+            y = int(np.sin(ang + yaw)*numberGrid+coords[1] )
+            # self.get_logger().info(str(x)+" "+str(y))
+            value = cdt[x,y]
+            # self.get_logger().info(str(value))
+            if value > best_value:
+                best_value = value
+                bestX=x
+                bestY=y
+                # self.get_logger().info("menim hodnotu "+str(bestX)+" "+str(bestY))
+
+        self.marker.header.stamp=rclpy.clock.Clock().now().to_msg()
+        self.marker.pose.position.x=float(bestX*meta.resolution+origin.x)
+        self.marker.pose.position.y=float(bestY*meta.resolution+origin.y)
+        self.publisher4.publish(self.marker)
+        #######################################################################
+
+        te = time.time()
+        self.get_logger().info(str(te-t0))
+
+    # callback na cartographer mapu
+    def callback(self, map):
+        if self.lock.acquire(blocking=True, timeout=0.2):
+            self.get_logger().info("Map received")
+            self.map = map
+
+    #AKTUALNE NEPOUZITE
+    def trajectory_timer(self):
+        if self.map is None or self.laser is None or self.last_pose is None:
+            return
+        t0 = time.time()
+        self.lock.acquire(blocking=True,timeout=-1)
+
+        #Prevedeni 1D pole na 2D
+        map = self.map
+        l = self.map.data
+        meta = self.map.info
+
+        # prevedeni laser scanu do souradnic mapy #############################
+        origin = meta.origin.position
+        #get the direction
+        direction = self.laser[0:2,:]-np.array([[origin.x],[origin.y]])
+        #rotate it by theta (from grid origin)
+        #the grid is in the x-y plane, the rotation is therefore around z axis
+        #the quaternion looks like [cos(t/2),0,0,sin(t/2)]
+        theta = 2*np.arccos(meta.origin.orientation.w)
+        c = np.cos(theta)
+        s = np.sin(theta)
+        R = np.array([[c,-s],[s,c]])
+        direction = np.matmul(R,direction)
+        #from the known grid resolution, convert direction to coordinates
+        coords = direction//meta.resolution
+        coords = coords.astype(int)
+        #######################################################################
+        self.lock.release()
+
         #unpack the list to numpy array
         arr = np.array(l)
         grid = arr.reshape((meta.height,meta.width)).T
@@ -109,7 +232,7 @@ class CenterLine(Node):
 
         #pridej body ze scanu do mapy
         obstacles = np.zeros_like(image)
-        coords = coords[:, np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1])]
+        coords = coords[:, np.logical_and(np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1]),np.logical_and(coords[0,:]>=0, coords[1,:]>=0))]
         try: 
             obstacles[coords[0,:],coords[1,:]] = 1
             obstacles = ndimage.binary_dilation(obstacles, iterations=4).astype(obstacles.dtype)
@@ -121,19 +244,34 @@ class CenterLine(Node):
             self.get_logger().error(str([np.min(coords[1,:]), np.max(coords[1,:])])) 
 
         #Dilatace prekazek
-        image = ndimage.binary_dilation(image, iterations=4).astype(image.dtype)
+        image = ndimage.binary_dilation(image, iterations=10).astype(image.dtype)
 
-        aug_list = (99*image).T.reshape([meta.height*meta.width]).tolist()
-        o = OccupancyGrid()
-        o.header.stamp = rclpy.clock.Clock().now().to_msg()
-        o.header.frame_id = "map"
-        o.info = meta
-        o.data = aug_list
-        self.publisher3.publish(o)
-        
+        if PUBLISH_DEBUG:
+            aug_list = (99*image).T.reshape([meta.height*meta.width]).tolist()
+            o = OccupancyGrid()
+            o.header.stamp = rclpy.clock.Clock().now().to_msg()
+            o.header.frame_id = "map"
+            o.info = meta
+            o.data = aug_list
+            self.publisher3.publish(o)
+
         #Vytvoreni skeletonu
         image = np.logical_not(image)
         skeleton = skeletonize(image).astype(np.uint16).T
+        # id = np.nonzero(skeleton)
+        # id = np.concatenate((id[1][None,:],id[0][None,:]),axis=0)
+
+        origin = meta.origin.position
+        direction = np.array([[self.last_pose.position.x],[self.last_pose.position.y]])-np.array([[origin.x],[origin.y]])
+        theta = 2*np.arccos(meta.origin.orientation.w)
+        c = np.cos(theta)
+        s = np.sin(theta)
+        R = np.array([[c,-s],[s,c]])
+        direction = np.matmul(R,direction)
+        coords = direction//meta.resolution
+        coords = coords.astype(int)
+        x=direction[0]
+        y=direction[1]
 
         #smooth-out the skeleton and remove small branches
         #skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
@@ -163,14 +301,12 @@ class CenterLine(Node):
         t1 = time.time()
         # self.get_logger().info("Done! %f" % (t1-t0))
 
+    # callback na laser scan
     def callback2(self, msg):
         if self.last_pose is None:
             return
+        self.get_logger().info("Scan received")
         t0 = time.time()
-        #self.scans_received += 1
-        #if self.scans_received != DROP_EVERY_N:
-        #    return
-        #self.scans_received = 0
         ranges = np.array(msg.ranges)
         angles = np.arange(msg.angle_min, msg.angle_max, msg.angle_increment)
         c = np.cos(angles)
@@ -178,13 +314,10 @@ class CenterLine(Node):
         rot = np.array([[c,-s],[s,c]])  #2*2*N
         rot = np.swapaxes(np.swapaxes(rot,0,1),0,2)
         x_axis = np.repeat(np.array([[[1.],[0.]]]), len(ranges), axis=0)
-        # points_2d = np.zeros((2,len(ranges)))
-        # for i in range(len(ranges)):
-        #     points_2d[:, i:i+1] = ranges[i]*np.matmul(rot[:,:,i], x_axis)
         rot_t = torch.from_numpy(rot)
         x_axis_t = torch.from_numpy(x_axis)
         points_2d = ranges*(torch.matmul(rot_t, x_axis_t).numpy().reshape((len(ranges),2)).T)
-        
+
         points = np.concatenate((points_2d, np.zeros_like(ranges)[None,:]))
 
         h = Header()
@@ -193,25 +326,7 @@ class CenterLine(Node):
         cloud = pc2.create_cloud_xyz32(h, points.T.tolist())
         self.publisher2.publish(cloud)
 
-        # try:
-        #     # trans = self.tf_buffer.lookup_transform("map", "laser", rclpy.time.Time())
-        #     trans = self.tf_buffer.lookup_transform("map", "laser", msg.header.stamp)
-        # except TransformException as e:
-        #     self.get_logger().error(str(e))
-        #     return
-        # q = (
-        #     trans.transform.rotation.w,
-        #     trans.transform.rotation.x,
-        #     trans.transform.rotation.y,
-        #     trans.transform.rotation.z
-        # )
-        # euler = quat2euler(q)
-        # roll, pitch, yaw = euler
-        # c = np.cos(yaw)
-        # s = np.sin(yaw)
-        # x = trans.transform.translation.x
-        # y = trans.transform.translation.y
-
+        self.lock.acquire(blocking=True,timeout=-1)
         q = (
             self.last_pose.orientation.w,
             self.last_pose.orientation.x,
@@ -224,15 +339,21 @@ class CenterLine(Node):
         s = np.sin(yaw)
         x = self.last_pose.position.x
         y = self.last_pose.position.y
+        self.lock.release()
 
         tf = np.array([[c,-s,0,x],[s,c,0,y],[0,0,1,0],[0,0,0,1]])
         points_h = np.concatenate((points, np.ones((1,points.shape[1]))))
-        self.laser = np.matmul(tf,points_h)
+        points_tf = np.matmul(tf,points_h)
+        if self.lock.acquire(blocking=True, timeout=0.2):
+            self.laser = points_tf
         t1 = time.time()
         self.get_logger().info("Done! %f" % (t1-t0))
 
+    # callback na pozici robota v mape
     def callback3(self, msg):
-        self.last_pose = msg.pose
+        if self.lock.acquire(blocking=True, timeout=0.2):
+            self.get_logger().info("Pose received")
+            self.last_pose = msg.pose
 
 
 def DistMatrix(x): #vypocet matice urcujici vzdalenosti mezi jednotlivymi body
