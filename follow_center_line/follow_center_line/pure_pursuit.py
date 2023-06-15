@@ -17,7 +17,7 @@ from std_msgs.msg import Header
 import threading
 
 la = 1.0
-k = 0.4
+k = 0.6
 ki = 0.
 PUBLISH_PATH = False
 
@@ -38,13 +38,19 @@ class PurePursuit(Node):
         # self.way_pub = self.create_publisher(Marker, 'lookahead', qos_profile=qos_profile)
         # self.path_publisher = self.create_publisher(PointCloud2, '/path_tf', qos_profile=qos_profile)
         self.drive_publisher = self.create_publisher(DriveApiValues, drive_topic, qos_profile=1)
-        self.way_pub = self.create_publisher(Marker, 'lookahead', qos_profile=1)
-        self.path_publisher = self.create_publisher(PointCloud2, '/path_tf', qos_profile=1)
+        # self.way_pub = self.create_publisher(Marker, 'lookahead', qos_profile=1)
+        # self.path_publisher = self.create_publisher(PointCloud2, '/path_tf', qos_profile=1)
 
         self.subscription = self.create_subscription(
             PoseStamped,
             '/cartographer/tracked_pose',
-            self.callback3,
+            self.callback5,
+            qos_profile=qos_profile)
+
+        self.subscription = self.create_subscription(
+            Marker,
+            '/lookPoint',
+            self.callback4,
             qos_profile=qos_profile)
 
         # self.tf_buffer = Buffer()
@@ -54,18 +60,19 @@ class PurePursuit(Node):
         self.lock = threading.RLock()
         self.points = None
 
-        self.marker = Marker()
-        self.marker.header.frame_id = "base_footprint"
-        self.marker.type = Marker.SPHERE
-        self.marker.action = Marker.ADD
-        self.marker.pose.position.z = 0.
-        self.marker.scale.x = 0.3
-        self.marker.scale.y = 0.3
-        self.marker.scale.z = 0.3
-        self.marker.color.a = 1.0
-        self.marker.color.r = 0.0
-        self.marker.color.g = 1.0
-        self.marker.color.b = 0.0
+        # self.marker = Marker()
+        # self.marker.header.frame_id = "base_footprint"
+        # self.marker.type = Marker.SPHERE
+        # self.marker.action = Marker.ADD
+        # self.marker.pose.position.z = 0.
+        # self.marker.scale.x = 0.3
+        # self.marker.scale.y = 0.3
+        # self.marker.scale.z = 0.3
+        # self.marker.color.a = 1.0
+        # self.marker.color.r = 0.0
+        # self.marker.color.g = 1.0
+        # self.marker.color.b = 0.0
+        self.marker_pose = None
         self.sum = 0
 
         # self.subscription = self.create_subscription(PointCloud2, '/path', self.path_callback, qos_profile=qos_profile)
@@ -142,7 +149,7 @@ class PurePursuit(Node):
             self.sum = self.sum - (dv_msg.steering-1)
             dv_msg.steering = -1.
         dv_msg.velocity = 0.3
-        if abs(dv_msg.steering) > 0.2:
+       	if abs(dv_msg.steering) > 0.2:
             dv_msg.velocity = 0.15
         dv_msg.forward = True
         self.drive_publisher.publish(dv_msg)
@@ -228,6 +235,53 @@ class PurePursuit(Node):
         dv_msg.velocity = np.clip(dv_msg.velocity, 0.1, 100.)
        	#if abs(dv_msg.steering) > 0.2:
             #dv_msg.velocity = 0.15
+        dv_msg.forward = True
+        self.drive_publisher.publish(dv_msg)
+        self.get_logger().info('published msg %s' % (str((dv_msg.velocity,dv_msg.steering))))
+
+    def callback4(self, msg):
+        self.marker_pose = np.array([[msg.pose.position.x], [msg.pose.position.y], [0.0]])
+
+    def callback5(self, msg):
+        if self.marker_pose is None:
+            return
+
+        x = msg.pose.position.x
+        y = msg.pose.position.y
+
+        q = (
+            msg.pose.orientation.w,
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z
+        )
+
+        euler = quat2euler(q)
+        roll, pitch, yaw = euler  
+
+        # transform point to base_footprint
+        c = np.cos(-yaw)
+        s = np.sin(-yaw)
+        mat = np.array([[c,-s,0,-x*c+y*s],[s,c,0,-x*s-y*c],[0,0,1,0],[0,0,0,1]])
+        point_tf = np.matmul(mat, np.concatenate((self.marker_pose, np.array([[1]]))))[0:3,:]
+
+        angle = get_angle(np.array([[1],[0],[0]]), point_tf, np.array([[0],[0],[1]]))
+
+        # Publish drive command
+        dv_msg = DriveApiValues()
+        if angle < 0:
+            dv_msg.steering = float(-angle)
+            dv_msg.right = True
+        else:
+            dv_msg.steering = float(angle)
+            dv_msg.right = False
+        self.sum += ki*dv_msg.steering
+        self.sum = np.clip(self.sum, -0.2, 0.2)
+        dv_msg.steering = k*dv_msg.steering+self.sum
+        dv_msg.steering = np.clip(dv_msg.steering, -1, 1)
+            
+        dv_msg.velocity = 0.2*np.exp(-4*angle**2)
+        dv_msg.velocity = np.clip(dv_msg.velocity, 0.1, 0.2)
         dv_msg.forward = True
         self.drive_publisher.publish(dv_msg)
         self.get_logger().info('published msg %s' % (str((dv_msg.velocity,dv_msg.steering))))
