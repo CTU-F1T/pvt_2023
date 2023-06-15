@@ -19,10 +19,12 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from transforms3d.euler import quat2euler
 import torch
+from collections import deque
+from visualization_msgs.msg import Marker
 
 SAVE_PATH=False
 DROP_EVERY_N = 4
-PUBLISH_DEBUG = False
+PUBLISH_DEBUG = True
 
 
 class CenterLine(Node):
@@ -36,6 +38,8 @@ class CenterLine(Node):
         self.publisher = self.create_publisher(PointCloud2, '/path', 1)
         self.publisher2 = self.create_publisher(PointCloud2, '/scan2cloud', 1)
         self.publisher3 = self.create_publisher(OccupancyGrid, '/grid_augmented', 1)
+        self.publisher5 = self.create_publisher(Marker, '/nearPoint', 1)
+        self.publisher6 = self.create_publisher(Marker, '/nearPoint2', 1)
         # qos_profile = QoSProfile(depth=1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self, qos=qos_profile)
@@ -44,7 +48,7 @@ class CenterLine(Node):
 
         time.sleep(0.5)
 
-        self.subscription = self.create_subscription(
+        self.subscription3 = self.create_subscription(
             PoseStamped,
             '/cartographer/tracked_pose',
             self.callback3,
@@ -60,10 +64,41 @@ class CenterLine(Node):
             self.callback2,
             qos_profile=qos_profile)
         self.subscription  # prevent unused variable warning
+        self.subscription2  # prevent unused variable warning
+        self.subscription3  # prevent unused variable warning
         self.laser = None
         self.scans_received = 0
         self.map = None
         self.last_pose = None
+
+        self.marker = Marker()
+        self.marker.header.frame_id = "map"
+        # self.marker.header.frame_id = "base_footprint"
+        self.marker.type = Marker.CUBE
+        self.marker.action = Marker.ADD
+        self.marker.pose.position.z = 0.
+        self.marker.scale.x = 0.05
+        self.marker.scale.y = 0.05
+        self.marker.scale.z = 0.05
+        self.marker.color.a = 1.0
+        self.marker.color.r = 1.0
+        self.marker.color.g = 0.0
+        self.marker.color.b = 0.0
+        self.marker_pose = None
+
+        self.marker2 = Marker()
+        self.marker2.header.frame_id = "map"
+        # self.marker.header.frame_id = "base_footprint"
+        self.marker2.type = Marker.CUBE
+        self.marker2.action = Marker.ADD
+        self.marker2.pose.position.z = 0.
+        self.marker2.scale.x = 0.05
+        self.marker2.scale.y = 0.05
+        self.marker2.scale.z = 0.05
+        self.marker2.color.a = 1.0
+        self.marker2.color.r = 0.0
+        self.marker2.color.g = 0.0
+        self.marker2.color.b = 1.0
 
         self.get_logger().info('node started')
 
@@ -111,6 +146,7 @@ class CenterLine(Node):
         #pridej body ze scanu do mapy
         obstacles = np.zeros_like(image)
         coords = coords[:, np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1])]
+        coords = coords[:, np.logical_and(coords[0,:]>=0, coords[1,:]>=0)]
         try: 
             obstacles[coords[0,:],coords[1,:]] = 1
             obstacles = ndimage.binary_dilation(obstacles, iterations=4).astype(obstacles.dtype)
@@ -136,6 +172,10 @@ class CenterLine(Node):
         #Vytvoreni skeletonu
         image = np.logical_not(image)
         skeleton = skeletonize(image).astype(np.uint16).T
+        np.savetxt("skeleton.txt",skeleton,"%d", delimiter="")
+        self.get_logger().info('skeletonize')
+        # self.get_logger().info(skeleton[0][0])
+        print(skeleton[0][0])
 
         #smooth-out the skeleton and remove small branches
         #skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
@@ -143,6 +183,138 @@ class CenterLine(Node):
         # skeleton = ndimage.binary_dilation(skeleton, iterations=15).astype(image.dtype)
         # skeleton = skeletonize(skeleton).astype(np.uint16).T
 
+        #pozice auta do mapy
+        print("pozice robota: ", self.last_pose.position.x, " ", self.last_pose.position.y)
+        print("originy: ", origin.x, " ", origin.y)
+        direction = np.array([[self.last_pose.position.x],[self.last_pose.position.y]])-np.array([[origin.x],[origin.y]])
+        print("direction: ", direction)
+        #rotate it by theta (from grid origin)
+        #the grid is in the x-y plane, the rotation is therefore around z axis
+        #the quaternion looks like [cos(t/2),0,0,sin(t/2)]
+        theta = 2*np.arccos(meta.origin.orientation.w)
+        c = np.cos(theta)
+        s = np.sin(theta)
+        R = np.array([[c,-s],[s,c]])
+        direction = np.matmul(R,direction)
+        print("direction po transformaci: ", direction)
+        #from the known grid resolution, convert direction to coordinates
+        posRob = direction//meta.resolution
+        print("postRob po deleni", posRob)
+        #return
+        posRob = [int(posRob[0]), int(posRob[1])]
+        print("postRob ",posRob)
+        self.get_logger().info("pozice robota grid")
+        self.get_logger().info(str(posRob[0]))
+        self.get_logger().info(str(posRob[1]))
+        moves=[[1,0],[0,1],[0,-1],[-1,0]]
+        NearBod=None
+        visited = np.zeros_like(skeleton)
+        if(posRob[0]<0 or posRob[0]>=skeleton.shape[1] or posRob[1]<0 or posRob[1]>=skeleton.shape[0]):
+            return
+            
+        q=deque()
+        pozice=[posRob[0],posRob[1]]
+        q.append(pozice)
+        visited[posRob[1],posRob[0]]=1
+        self.get_logger().info('vstupuji do while')
+        while(q):
+            x,y=q.popleft()
+            # self.get_logger().info(str(skeleton[y][x]))
+            #print("skeleton ",skeleton.shape," x a y: ",x," ",y)
+            if(NearBod != None):
+                break
+            for mv in moves:
+                xNew=mv[0]+x
+                yNew=mv[1]+y
+                if xNew>=0 and xNew<skeleton.shape[1] and yNew>=0 and yNew<skeleton.shape[0]:
+                    if(visited[yNew,xNew]==0):
+                        q.append([xNew,yNew])
+                        visited[yNew, xNew]=1
+                        if(skeleton[yNew][xNew]==1):
+                            NearBod=[yNew, xNew]
+                            break
+        
+        q = (
+            self.last_pose.orientation.w,
+            self.last_pose.orientation.x,
+            self.last_pose.orientation.y,
+            self.last_pose.orientation.z
+        )
+        euler = quat2euler(q)
+        roll, pitch, yaw = euler
+        c = np.cos(yaw)
+        s = np.sin(yaw)
+        
+        pohyby=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]]  # FIXME: opravit poradi (index 0 by mel asi byt pohyb proti smeru osy x)
+        # pohyby=[[-1,0],[-1,1],[0,1],[1,1],[0,1],[1,-1],[0,-1],[-1,-1]]
+        # pohyby=[[-1,0],[-1,1],[0,1],[1,1],[0,1],[1,-1],[0,-1],[-1,-1]]
+        uhel=yaw
+        uhel+=np.pi
+        uhel*=(8/(2*np.pi))
+        # uhel-=0.5
+        self.get_logger().info(str(uhel))
+        uhel=np.round(uhel)
+        index=uhel%8
+        self.get_logger().info(str(yaw))
+        self.get_logger().info(str(index))
+
+        # NearBod=[NearBod[0]+s*20,NearBod[1]+c*20]
+        self.get_logger().info("nalezen bod v gridu()")
+        self.get_logger().info(str(NearBod[0]))
+        self.get_logger().info(str(NearBod[1]))
+        self.marker.header.stamp = rclpy.clock.Clock().now().to_msg()
+        self.marker.pose.position.y = float(NearBod[0]*meta.resolution+origin.y)
+        self.marker.pose.position.x = float(NearBod[1]*meta.resolution+origin.x)
+        # self.marker.pose.position.x=1.0
+        # self.marker.pose.position.y=0.0
+        self.publisher5.publish(self.marker)
+        
+        stack=[]
+        visited2 = np.zeros_like(skeleton)
+        visited2[NearBod[0],NearBod[1]]=1
+        self.get_logger().info("\n\ntestuji")
+        self.get_logger().info(str(NearBod[1]))
+        self.get_logger().info(str(NearBod[0]))
+
+        # for i in pohyby:
+        for i in range(int(index-4),int(index+5)):  # FIXME: prohledej jen ve smeru jizdy auta
+            # if(skeleton[NearBod[0]+i[1],NearBod[1]+i[0]]==1):
+            #     self.get_logger().info(str(NearBod[1]+i[1]))
+            #     self.get_logger().info(str(NearBod[0]+i[0]))
+            #     self.get_logger().info(str(i))
+            i=i%8
+            if(skeleton[NearBod[0]+pohyby[i][1],NearBod[1]+pohyby[i][0]]==1):
+                stack.append([NearBod[1]+pohyby[i][1],NearBod[0]+pohyby[i][0],0])
+                visited2[NearBod[0]+pohyby[i][1],NearBod[1]+pohyby[i][0]]=1
+
+        self.get_logger().info(str(len(stack)))
+        # return
+        self.get_logger().info("jdu do while")
+        count = 0
+        while(len(stack)!=0):
+            # self.get_logger().info("while" + str(count))
+            count += 1
+            x,y,delka=stack.pop()
+            if(delka>=50):
+                self.marker2.header.stamp = rclpy.clock.Clock().now().to_msg()
+                self.marker2.pose.position.y = float(y*meta.resolution+origin.y)
+                self.marker2.pose.position.x = float(x*meta.resolution+origin.x)
+                self.publisher6.publish(self.marker2)
+                self.get_logger().warning("publikuju bod po 50")
+                break
+            for i in range(0,len(pohyby)):#range(int(index-4),int(index+5)):  # FIXME: prohledej jen ve smeru jizdy auta
+                #i=i%8
+                xNew=x+pohyby[i][0]
+                yNew=y+pohyby[i][1]
+                if(skeleton[yNew][xNew]==1):
+                    self.get_logger().info("nalezen bod na ceste")
+                    if(visited2[yNew][xNew]==0):
+                        self.get_logger().info("pridam")
+                        stack.append([xNew,yNew,delka+1])
+                        visited2[yNew,xNew] = 1
+        self.get_logger().info("jdu z while")
+
+        skeleton[NearBod[0]]
         #Priprava skeletonu pro nasledne serazeni
         id = np.nonzero(skeleton)
         id = np.concatenate((id[1][None,:],id[0][None,:]),axis=0)
@@ -163,7 +335,7 @@ class CenterLine(Node):
             np.savetxt('track.txt', id_tf.T)
 
         t1 = time.time()
-        # self.get_logger().info("Done! %f" % (t1-t0))
+        self.get_logger().info("Done! %f" % (t1-t0))
 
     def callback2(self, msg):
         if self.last_pose is None:
@@ -235,52 +407,6 @@ class CenterLine(Node):
 
     def callback3(self, msg):
         self.last_pose = msg.pose
-
-
-def DistMatrix(x): #vypocet matice urcujici vzdalenosti mezi jednotlivymi body
-    dim = len(x)
-    M = np.zeros((dim, dim))
-
-    for i in range(dim):
-        for j in range(i+1, dim):
-            M[i][j] = d.euclidean(x[i], x[j])
-            M[j][i] = M[i][j]
-
-    return M
-
-
-def sortCenterLine(v): #serazeni bodu stredove cary
-    new = np.zeros((len(v), 2))
-    v = np.array(v)
-    idx = list(v[:, 0]).index(min(i for i in v[:, 0] if i >= 0))
-    # D = DistMatrix(v)
-    D = cdist(v, v)
-    minimum = list(D[idx]).index(np.min(D[idx][np.nonzero(D[idx])]))
-    D = np.delete(D, idx, 0)
-    D = np.delete(D, idx, 1)
-    new[0][0] = v[idx][0]
-    new[0][1] = v[idx][1]
-    v = np.delete(v, idx, axis=0)
-    if idx < minimum:
-        idx = minimum - 1
-    else:
-        idx = minimum
-
-    for i in range(1, len(new) - 1):
-        minimum = list(D[idx]).index(np.min(D[idx][np.nonzero(D[idx])]))
-        new[i][0] = v[idx][0]
-        new[i][1] = v[idx][1]
-        v = np.delete(v, idx, axis=0)
-        D = np.delete(D, idx, 0)
-        D = np.delete(D, idx, 1)
-        if idx < minimum:
-            idx = minimum - 1
-        else:
-            idx = minimum
-    new[len(new) - 1][0] = v[0][0]
-    new[len(new) - 1][1] = v[0][1]
-
-    return new
 
 
 def main(args=None):
