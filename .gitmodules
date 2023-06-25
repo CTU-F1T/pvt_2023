@@ -1,0 +1,3 @@
+[submodule "src/vehicle_platform/vesc"]
+	path = src/vehicle_platform/vesc
+	url = https://github.com/michallenc/vesc.git
