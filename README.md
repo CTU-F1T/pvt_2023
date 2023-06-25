@@ -4,10 +4,10 @@ This is an implementation of dynamic obstacle avoidance to CTU's **f1tenth** cod
 based on an implementation from **f1tenth-rewrite** (at `https://github.com/CTU-F1T/f1tenth-rewrite`)
 
 ## Localization
-Cartographer slam was selected for localization of the car on the track. Modified configuration files can
+[Cartographer](https://github.com/cartographer-project/cartographer_ros) slam was selected for localization of the car on the track. Modified configuration files can
 be found in [this folder](src/perception/recognition/cartographer_slam/config). Two sets of measurements
 were done to evaluate the performance of the localization. Detailed description of the measuring procedure
-and the results can be found in TODO.
+and the results can be found in [this file](slam_measurements/results.pdf).
 
 ## Implementation
 
@@ -29,7 +29,8 @@ as a look ahead point if DFS is succesfull. The car is stopped if DFS is not suc
 
 ### Unsuccelfull methods
 
-The following methods for skeletonization were not succesfull: 'lee', 'medial_axis'.
+The following methods for skeletonization were not succesfull: 'lee', 'medial_axis', because they create
+more side branches and run longer than the selected one.
 
 We also tried EDF algorithm for path generation but it did not solve the problem with several branches
 therefore skeletonization was use instead of.
@@ -46,10 +47,23 @@ colcon build --symlink-install --mixin compile-commands --packages-ignore vesc_a
 ```
 
 ## Running
+It is necessary to create the map first, for just mapping, use the following commands:
+```bash
+ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
+ros2 launch cartographer_slam mapping.launch.py
+```
 
+Cartographer searches for the saved map in a specific folder, copy it there first:
+```bash
+auto save_slam track
+cp track.pbstream /home/nvidia/ros2_ws/install/storage/share/storage/stage/world
+```
+
+Then run all required nodes:
 ```bash
 ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
 ros2 launch cartographer_slam localization.launch.py map:=track.pbstream
-cp track.pbstream /home/nvidia/ros2_ws/install/storage/share/storage/share/world_
 ros2 launch follow_center_line follow_line.launch.py
 ```
+
+After publishing 'False' on topic '/eStop' the car should start moving.
