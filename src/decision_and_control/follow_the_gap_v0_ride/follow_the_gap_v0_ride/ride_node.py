@@ -54,21 +54,21 @@ class RideNode(Node):
         # TODO 3: Did we use rqt_reconfigure (https://github.com/ros-visualization/rqt_reconfigure)?
         #   If we did, we might need to investigate rqt_reconfigure ROS 2 port state
         #   (it was ported to ROS 2 Dashing, see https://github.com/ros-visualization/rqt_reconfigure/issues)
-        self.acceleration: float = math.nan
-        self.decceleration: float = math.nan
-        self.VP_SPEED_MIN: float = math.nan
-        self.VP_SPEED_MAX: float = math.nan
-        self.VP_SPEED_AVOID: float = math.nan
-        self.VP_TURN_MAX_L: float = math.nan
-        self.VP_TURN_MIN_L: float = math.nan
-        self.VP_TURN_AVOID_L: float = math.nan
-        self.VP_TURN_MAX_R: float = math.nan
-        self.VP_TURN_MIN_R: float = math.nan
-        self.VP_TURN_AVOID_R: float = math.nan
-        self.ANGLE_SWITCH: float = math.nan
-        self.ANGLE_HYSTER: float = math.nan
-        self.ANGLE_SWITCH_A: float = math.nan
-        self.ANGLE_HYSTER_A: float = math.nan
+        self.acceleration: float = 0.5
+        self.decceleration: float = 0.5
+        self.VP_SPEED_MIN: float = 0.2
+        self.VP_SPEED_MAX: float = 0.5
+        self.VP_SPEED_AVOID: float = 0.2
+        self.VP_TURN_MAX_L: float = 0.5
+        self.VP_TURN_MIN_L: float = 0.2
+        self.VP_TURN_AVOID_L: float = 0.2
+        self.VP_TURN_MAX_R: float = 0.5
+        self.VP_TURN_MIN_R: float = 0.2
+        self.VP_TURN_AVOID_R: float = 0.2
+        self.ANGLE_SWITCH: float = 0.2
+        self.ANGLE_HYSTER: float = 0.2
+        self.ANGLE_SWITCH_A: float = 0.2
+        self.ANGLE_HYSTER_A: float = 0.2
         # param name -> self[name] or self[name] and mapper function
         self.config_map: Dict[str, Union[str, Tuple[str, Callable[[Any], Any]]]] = {
 
@@ -192,9 +192,9 @@ class RideNode(Node):
             # self.VP_SPEED_AVOID = 0.098602794  # ~ 9200
             # note: speed_min (Level-2 speed) and speed_max (Level-1 speed)
             #       descriptions are NOT swapped. The naming has a historical reason.
-            ('speed_min', 'Level-2 speed', 0.05, 0.0, 0.3),
-            ('speed_max', 'Level-1 speed', 0.05, 0.0, 0.3),
-            ('speed_avoid', 'Level-3 speed', 0.05, 0.0, 0.3),
+            ('speed_min', 'Level-2 speed', 0.18, 0.0, 0.3),
+            ('speed_max', 'Level-1 speed', 0.18, 0.0, 0.3),
+            ('speed_avoid', 'Level-3 speed', 0.14, 0.0, 0.3),
 
             # PWM duty for turning
             # TODO: Why the values in VP_* are NEGATIVE but parameters are POSITIVE?
@@ -340,7 +340,8 @@ class RideNode(Node):
             # pwm_drive <= self.current_drive
             self.current_drive = max(pwm_drive, self.current_drive - self.decceleration * time_diff)
 
-        dv_msg.velocity = self.current_drive
+        #dv_msg.velocity = self.current_drive
+        dv_msg.velocity = pwm_drive
         dv_msg.forward = True
         #self.get_logger().info(
         #    f'last_timestamp = {self.last_timestamp}, diff = {time_diff}, v0 = {pwm_drive}, v = {self.current_drive}'

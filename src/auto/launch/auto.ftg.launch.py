@@ -9,7 +9,7 @@ def generate_launch_description():
         launch.actions.DeclareLaunchArgument(
             name='config',
             description='vehicle config',
-            # default_value='tx2-auto-3.yaml',
+            default_value='tx2-auto-usa.yaml',
         ),
 
         launch.actions.SetLaunchConfiguration(
@@ -26,26 +26,26 @@ def generate_launch_description():
         ),
 
         # obstacle_substitution
-        launch.actions.IncludeLaunchDescription(
-            launch_description_source=launch.launch_description_sources.PythonLaunchDescriptionSource(
-                launch_file_path=launch.substitutions.PathJoinSubstitution([
-                    launch_ros.substitutions.FindPackageShare(package='obstacle_substitution'),
-                    'start.launch.py'
-                ]),
-            ),
-            launch_arguments=[],
-        ),
+        #launch.actions.IncludeLaunchDescription(
+        #    launch_description_source=launch.launch_description_sources.PythonLaunchDescriptionSource(
+        #        launch_file_path=launch.substitutions.PathJoinSubstitution([
+        #            launch_ros.substitutions.FindPackageShare(package='obstacle_substitution'),
+        #            'start.launch.py'
+        #        ]),
+        #    ),
+        #    launch_arguments=[],
+        #),
 
         # follow_the_gap_v0_ride
-        launch.actions.IncludeLaunchDescription(
-            launch_description_source=launch.launch_description_sources.PythonLaunchDescriptionSource(
-                launch_file_path=launch.substitutions.PathJoinSubstitution([
-                    launch_ros.substitutions.FindPackageShare(package='follow_the_gap_v0_ride'),
-                    'start.launch.py'
-                ]),
-            ),
-            launch_arguments=[],
-        ),
+        #launch.actions.IncludeLaunchDescription(
+        #    launch_description_source=launch.launch_description_sources.PythonLaunchDescriptionSource(
+        #        launch_file_path=launch.substitutions.PathJoinSubstitution([
+        #            launch_ros.substitutions.FindPackageShare(package='follow_the_gap_v0_ride'),
+        #            'start.launch.py'
+        #        ]),
+        #    ),
+        #    launch_arguments=[],
+        #),
 
         # lidar
         launch.actions.IncludeLaunchDescription(
@@ -92,4 +92,15 @@ def generate_launch_description():
             ],
         ),
 
+        # tf
+        launch_ros.actions.Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            arguments= ["0", "0", "0", "0", "0", "0", "base_footprint", "vesc"]
+        ),
+        launch_ros.actions.Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            arguments= ["0.16", "0", "0", "0", "0", "0", "base_footprint", "laser"]
+        ),
     ])

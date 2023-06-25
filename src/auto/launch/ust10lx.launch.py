@@ -57,7 +57,7 @@ def generate_launch_description():
                     'publish_intensity': False,
                     'publish_multiecho': False,
                     'cluster': 1,
-                    'skip': 0,
+                    'skip': 1,
                 },
             ],
         ),

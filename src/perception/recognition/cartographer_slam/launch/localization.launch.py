@@ -56,8 +56,8 @@ def generate_launch_description():
             # see https://google-cartographer-ros.readthedocs.io/en/latest/ros_api.html
             # ('echoes', 'horizontal_laser_2d'),
             ('scan', '/scan'),
-            ('odom', '/stage_ros2/car/odom'),
-            # ('/imu', 'xxx'),
+            ('odom', '/odom'),
+            ('imu', '/sensors/imu/raw'),
         ],
     )
 
@@ -86,7 +86,7 @@ def generate_launch_description():
         output='screen',
         arguments=[
             # x y z qx qy qz qw
-            '0', '0', '0', '0', '0', '0',
+            '0.16', '0', '0', '0', '0', '0',
             # frame_id child_frame_id
             'base_link', 'laser',
         ],
