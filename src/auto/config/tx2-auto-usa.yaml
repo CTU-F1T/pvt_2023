@@ -1,0 +1,47 @@
+/drive_api:
+  ros__parameters:
+    drive_battery:
+      cells: 3
+      cell_voltage: 3.7  # V
+    motor:
+      # to_erpm is calculated
+      # erpm_max is calculated
+      back_emf: 3500
+      poles: 4
+      limit: 0
+      pinion: 13
+    differential:
+      spur: 54
+      pinion: 13
+      ring: 37
+    wheels:
+      radius: 0.055  # m
+    pwm:
+      throttle:
+        calm_value: 8950
+        forward:
+          min: 9100
+          max: 11918
+        backward:
+          min: 8759
+          max: 5980
+      steering:
+        calm_value: 8560
+        left:
+          min: 8260
+          max: 6510
+        right:
+          min: 8860
+          max: 11000
+    angular_steering:
+      left_max: 29.106255993  # deg
+      right_max: 27.330086828  # deg
+    run_mode: basic_vesc
+/teensy_drive:
+  ros__parameters:
+    port: /dev/tty.teensy
+/vesc:
+  ros__parameters:
+    port: /dev/tty.vesc
+    frame_id: vesc
+    speed_max: 30000.0

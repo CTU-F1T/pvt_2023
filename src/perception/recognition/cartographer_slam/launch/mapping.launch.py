@@ -38,11 +38,6 @@ def generate_launch_description():
         namespace='cartographer',
         package='cartographer_ros',
         output='screen',
-        parameters=[
-            {
-                'use_sim_time': True,
-            },
-        ],
         arguments=[
             '-configuration_directory',
             get_shared_file_substitution(THIS_PKG, 'config'),
@@ -53,8 +48,8 @@ def generate_launch_description():
             # see https://google-cartographer-ros.readthedocs.io/en/latest/ros_api.html
             # ('echoes', 'horizontal_laser_2d'),
             ('scan', '/scan'),
-            ('odom', '/stage_ros2/car/odom'),
-            # ('/imu', 'xxx'),
+            ('odom', '/odom'),
+            ('imu', '/sensors/imu/raw'),
         ],
     )
 
@@ -68,11 +63,6 @@ def generate_launch_description():
             '-resolution',
             '0.05',
         ],
-        parameters=[
-            {
-                'use_sim_time': True,
-            },
-        ],
     )
 
     # see https://docs.ros.org/en/rolling/Tutorials/Tf2/Writing-A-Tf2-Static-Broadcaster-Py.html#the-proper-way-to-publish-static-transforms
@@ -85,7 +75,7 @@ def generate_launch_description():
             # x y z qx qy qz qw
             '0', '0', '0', '0', '0', '0',
             # frame_id child_frame_id
-            'base_link', 'laser',
+            'base_footprint', 'laser',
         ],
     )
 
@@ -97,9 +87,9 @@ def generate_launch_description():
         output='screen',
         arguments=[
             # x y z qx qy qz qw
-            '0', '0', '0', '0', '-0.707', '0.707',
+            '0', '0', '0', '0', '0', '0', #'-0.707', '0.707',
             # frame_id child_frame_id
-            'base_link', 'base_imu_link',
+            'base_footprint', 'vesc',
         ],
     )
 
@@ -125,6 +115,6 @@ def generate_launch_description():
         cartographer_node,
         occupancy_grid_node,
         # urdf_publisher,
-        # static_transform_publisher_laser,
-        # static_transform_publisher_imu,
+        static_transform_publisher_laser,
+        static_transform_publisher_imu,
     ])

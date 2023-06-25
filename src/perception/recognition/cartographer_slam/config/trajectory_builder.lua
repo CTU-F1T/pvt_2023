@@ -12,16 +12,15 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
-include "mapping.lua"
+include "trajectory_builder_2d.lua"
+include "trajectory_builder_3d.lua"
 
---TRAJECTORY_BUILDER.pure_localization=true
-
-TRAJECTORY_BUILDER.pure_localization_trimmer = {
-  max_submaps_to_keep = 2,
+TRAJECTORY_BUILDER = {
+  trajectory_builder_2d = TRAJECTORY_BUILDER_2D,
+  trajectory_builder_3d = TRAJECTORY_BUILDER_3D,
+--  pure_localization_trimmer = {
+--    max_submaps_to_keep = 3,
+--  },
+  collate_fixed_frame = true,
+  collate_landmarks = false,
 }
-POSE_GRAPH.optimize_every_n_nodes = 1
-POSE_GRAPH.constraint_builder.sampling_ratio = 0.00001
-POSE_GRAPH.global_sampling_ratio = 0.001
-POSE_GRAPH.constraint_builder.fast_correlative_scan_matcher.branch_and_bound_depth=5
-
-return options

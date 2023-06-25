@@ -22,7 +22,7 @@ def generate_start_launch_description():
             ],
         ),
 
-        launch_ros.actions.Node(
+       launch_ros.actions.Node(
             package='follow_the_gap_v0_ride',
             executable='ride_node',
             output='screen',
