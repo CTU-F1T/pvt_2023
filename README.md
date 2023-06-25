@@ -3,6 +3,12 @@
 This is an implementation of dynamic obstacle avoidance to CTU's **f1tenth** codebase. This code is
 based on an implementation from **f1tenth-rewrite** (at `https://github.com/CTU-F1T/f1tenth-rewrite`)
 
+## Localization
+Cartographer slam was selected for localization of the car on the track. Modified configuration files can
+be found in [this folder](src/perception/recognition/cartographer_slam/config). Two sets of measurements
+were done to evaluate the performance of the localization. Detailed description of the measuring procedure
+and the results can be found in TODO.
+
 ## Implementation
 
 ### Map creation
