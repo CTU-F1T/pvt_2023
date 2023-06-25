@@ -1,3 +1,6 @@
 [submodule "src/vehicle_platform/vesc"]
 	path = src/vehicle_platform/vesc
 	url = https://github.com/michallenc/vesc.git
+[submodule "src/messages"]
+	path = src/messages
+	url = https://github.com/CTU-F1T/messages
