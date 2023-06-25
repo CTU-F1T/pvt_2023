@@ -3,9 +3,15 @@
 <package format="3">
   <name>follow_center_line</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="user@todo.todo">user</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Autonomous following of center line with dynamic obstacle avoidance</description>
+  <maintainer email="danekja5@fel.cvut.cz">Jan Daněk</maintainer>
+  <license>Apache license 2.0</license>
+  <author email="danekja5@fel.cvut.cz">Jan Daněk</author>
+  <author email="kuchape4@fel.cvut.cz">Petr Kuchař</author>
+  <author email="janesada@fel.cvut.cz">Adam Jáneš</author>
+  <author email="lencmich@fel.cvut.cz">Michal Lenc</author>
+  <author email="brozbohu@fel.cvut.cz">Bohumil Brož</author>
+  <author email="polakka7@fel.cvut.cz">Kateřina Poláková</author>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
