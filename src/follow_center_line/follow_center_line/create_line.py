@@ -11,15 +11,12 @@ from std_msgs.msg import Header
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy
 import time
 from sensor_msgs_py import point_cloud2 as pc2
-# from tf2_ros import TransformException
-# from tf2_ros.buffer import Buffer
-# from tf2_ros.transform_listener import TransformListener
 from transforms3d.euler import quat2euler
 import torch
 from collections import deque
 from visualization_msgs.msg import Marker
 
-SAVE_PATH=False
+SAVE_PATH = False
 PUBLISH_DEBUG = False
 
 
@@ -28,37 +25,31 @@ class CenterLine(Node):
     def __init__(self):
         super().__init__('centerline')
 
-        # self.get_logger().info('init done')
         qos_profile = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST, reliability=QoSReliabilityPolicy.BEST_EFFORT)
 
         self.publisher1 = self.create_publisher(PointCloud2, '/path', 1)
         self.publisher2 = self.create_publisher(OccupancyGrid, '/grid_augmented', 1)
         self.publisher3 = self.create_publisher(Marker, '/lookahead_point', 1)
-        # self.tf_buffer = Buffer()
-        # self.tf_listener = TransformListener(self.tf_buffer, self, qos=qos_profile)
 
         self.get_logger().info('publishers started')
 
         time.sleep(0.5)
 
-        self.subscription3 = self.create_subscription(
+        self.tracked_pose_sub = self.create_subscription(
             PoseStamped,
             '/cartographer/tracked_pose',
-            self.callback3,
+            self.tracked_pose_cb,
             qos_profile=qos_profile)
 
         self.subscription = self.create_subscription(
             OccupancyGrid,
             '/cartographer/map',
             self.callback, 1)
-        self.subscription2 = self.create_subscription(
+        self.scan_sub = self.create_subscription(
             LaserScan,
             '/scan',
-            self.callback2,
+            self.scan_cb,
             qos_profile=qos_profile)
-        self.subscription  # prevent unused variable warning
-        self.subscription2  # prevent unused variable warning
-        self.subscription3  # prevent unused variable warning
         self.laser = None
         # self.scans_received = 0
         self.map = None
@@ -88,13 +79,13 @@ class CenterLine(Node):
     def trajectory_timer(self):
         if self.map is None or self.laser is None or self.last_pose is None:
             return
-        # t0 = time.time()
-        #Prevedeni 1D pole na 2D
+
+        # 1D array -> 2D array
         map = self.map
         l = self.map.data
         meta = self.map.info
         
-        # prevedeni laser scanu do souradnic mapy #############################
+        # convert laser coords to map frame #############################
         origin = meta.origin.position
         #get the direction
         direction = self.laser[0:2,:]-np.array([[origin.x],[origin.y]])
@@ -115,11 +106,11 @@ class CenterLine(Node):
         arr = np.array(l)
         grid = arr.reshape((meta.height,meta.width)).T
 
-        #Uprava mapy
+        # convert -1 to 99 to 0-1
         image = np.zeros_like(grid)
         image[np.logical_or(grid>=20, grid==-1)] = 1
 
-        #pridej body ze scanu do mapy
+        # add LIDAR scan points to map
         obstacles = np.zeros_like(image)
         coords = coords[:, np.logical_and(coords[0,:]<obstacles.shape[0], coords[1,:]<obstacles.shape[1])]
         coords = coords[:, np.logical_and(coords[0,:]>=0, coords[1,:]>=0)]
@@ -133,7 +124,7 @@ class CenterLine(Node):
             self.get_logger().error(str([np.min(coords[0,:]), np.max(coords[0,:])])) 
             self.get_logger().error(str([np.min(coords[1,:]), np.max(coords[1,:])])) 
 
-        #Dilatace prekazek
+        # Obstacles diletation
         image = ndimage.binary_dilation(image, iterations=5).astype(image.dtype)
 
         if PUBLISH_DEBUG:
@@ -145,11 +136,11 @@ class CenterLine(Node):
             o.data = aug_list
             self.publisher2.publish(o)
         
-        #Vytvoreni skeletonu
+        # Create skeleton
         image = np.logical_not(image)
         skeleton = skeletonize(image).astype(np.uint16).T
 
-        #pozice auta do mapy
+        # Get current position of the car
         direction = np.array([[self.last_pose.position.x],[self.last_pose.position.y]])-np.array([[origin.x],[origin.y]])
         #rotate it by theta (from grid origin)
         #the grid is in the x-y plane, the rotation is therefore around z axis
@@ -168,7 +159,9 @@ class CenterLine(Node):
         visited = np.zeros_like(skeleton)
         if(posRob[0]<0 or posRob[0]>=skeleton.shape[1] or posRob[1]<0 or posRob[1]>=skeleton.shape[0]):
             return
-            
+        
+
+        # BFS - find the nearest point on map
         q=deque()
         pozice=[posRob[0],posRob[1]]
         q.append(pozice)
@@ -188,6 +181,7 @@ class CenterLine(Node):
                             NearBod=[yNew, xNew]
                             break
                 
+        # get car orienation in map frame
         q = (
             self.last_pose.orientation.w,
             self.last_pose.orientation.x,
@@ -199,28 +193,28 @@ class CenterLine(Node):
         c = np.cos(yaw)
         s = np.sin(yaw)
         
-        pohyby=[[-1,0],[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1]]
-        uhel=yaw
-        uhel+=np.pi
-        uhel*=(8/(2*np.pi))
-        uhel=np.round(uhel)
-        index=uhel%8
+        move=[[-1,0],[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1]]
+        angle=yaw
+        angle+=np.pi
+        angle*=(8/(2*np.pi))
+        angle=np.round(angle)
+        index=angle%8
         
+        # DFS overhead
         stack=[]
         visited2 = np.zeros_like(skeleton)
         visited2[NearBod[0],NearBod[1]]=1
 
-        # for i in pohyby:
+        # find first point for DFS
         for i in range(int(index-3),int(index+4)):
             i=i%8
-            if(skeleton[NearBod[0]+pohyby[i][1],NearBod[1]+pohyby[i][0]]==1):
-                stack.append([NearBod[1]+pohyby[i][0],NearBod[0]+pohyby[i][1],0])
-                visited2[NearBod[0]+pohyby[i][1],NearBod[1]+pohyby[i][0]]=1
+            if(skeleton[NearBod[0]+move[i][1],NearBod[1]+move[i][0]]==1):
+                stack.append([NearBod[1]+move[i][0],NearBod[0]+move[i][1],0])
+                visited2[NearBod[0]+move[i][1],NearBod[1]+move[i][0]]=1
 
-        count = 0
+        # DFS implementation
         found=False
         while(len(stack)!=0):
-            count += 1
             x,y,delka=stack.pop()
             if(delka>=40):
                 self.marker.header.stamp = rclpy.clock.Clock().now().to_msg()
@@ -231,26 +225,26 @@ class CenterLine(Node):
                 break
             for i in range(int(index-3),int(index+4)):
                 i=i%8
-                xNew=x+pohyby[i][0]
-                yNew=y+pohyby[i][1]
+                xNew=x+move[i][0]
+                yNew=y+move[i][1]
                 if(skeleton[yNew][xNew]==1):
                     if(visited2[yNew][xNew]==0):
                         stack.append([xNew,yNew,delka+1])
                         visited2[yNew,xNew] = 1
 
         if not found:
-            self.get_logger().fatal("zadny bod, zastav")
+            self.get_logger().fatal("no point, stop")
             self.marker.header.stamp = rclpy.clock.Clock().now().to_msg()
             self.marker.pose.position.y = -1000.
             self.marker.pose.position.x = -1000.
             self.publisher3.publish(self.marker)
 
         skeleton[NearBod[0]]
-        #Priprava skeletonu pro nasledne serazeni
+        # Prepare skeleton for ordering
         id = np.nonzero(skeleton)
         id = np.concatenate((id[1][None,:],id[0][None,:]),axis=0)
 
-        #Prevedeni z indexu pole do souradneho systemu mapy
+        # Transfer from array index to map frame coords
         id_h = np.concatenate((id, np.ones((1, id.shape[1]))))
         tf = np.array([[map.info.resolution,0,map.info.origin.position.x], [0,map.info.resolution,map.info.origin.position.y], [0,0,1]])
         id_tf = np.matmul(tf, id_h)[0:2,:]
@@ -265,11 +259,8 @@ class CenterLine(Node):
         if SAVE_PATH:
             np.savetxt('track.txt', id_tf.T)
 
-        # t1 = time.time()
-        # self.get_logger().info("Done! %f" % (t1-t0))
-        # self.get_logger().info("")
-
-    def callback2(self, msg):
+    # convert laser to point
+    def scan_cb(self, msg):
         if self.last_pose is None:
             return
         t0 = time.time()
@@ -303,7 +294,8 @@ class CenterLine(Node):
         points_h = np.concatenate((points, np.ones((1,points.shape[1]))))
         self.laser = np.matmul(tf,points_h)
 
-    def callback3(self, msg):
+    # get last car position
+    def tracked_pose_cb(self, msg):
         self.last_pose = msg.pose
 
 
@@ -318,6 +310,6 @@ def main(args=None):
 
 if __name__ == '__main__':
     '''
-    Tento program vytvori v mape stredovou caru
+    Create the centerline in map
     '''
     main()
