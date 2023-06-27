@@ -1,7 +1,8 @@
 # F1/10 @ CTU (ROS 2 port) with dynamic obstacle avoidance
 
 This is an implementation of dynamic obstacle avoidance to CTU's **f1tenth** codebase. This code is
-based on an implementation from **f1tenth-rewrite** (at `https://github.com/CTU-F1T/f1tenth-rewrite`)
+based on an implementation from **f1tenth-rewrite** (at `https://github.com/CTU-F1T/f1tenth-rewrite`).
+The demonstration and presentation of this project is in [this folder](presentation).
 
 ## Localization
 [Cartographer](https://github.com/cartographer-project/cartographer_ros) slam was selected for localization of the car on the track. Modified configuration files can
