@@ -26,45 +26,45 @@ method 'zha' which is a fast parallel algorithm for thinning digital patherns.
 The BFS algorithm finds the nearest point on the path from the current position of the car and DFS
 follows the path to the depth 40 (map cells) and checks whether the path still exists there. This is to
 avoid false branches that can occur after skeletonization. The nearest point found with BFS is then taken
-as a look ahead point if DFS is succesfull. The car is stopped if DFS is not succesfull.
+as a look ahead point if DFS is succesful. The car is stopped if DFS is not succesful.
 
-### Unsuccelfull methods
+### Unsuccessful methods
 
-The following methods for skeletonization were not succesfull: 'lee', 'medial_axis', because they create
+The following methods for skeletonization were not succesful: 'lee', 'medial_axis', because they create
 more side branches and run longer than the selected one.
 
 We also tried EDF algorithm for path generation but it did not solve the problem with several branches
-therefore skeletonization was use instead of.
+therefore skeletonization was use instead.
 
 ## Building
 
-```bash
+```console
 # Clone the directory
-git clone https://github.com/CTU-F1T/pvt_2023
+$ git clone https://github.com/CTU-F1T/pvt_2023
 # Get vesc and messages submodule
-git submodule update --init --recusrsive
+$ git submodule update --init --recusrsive
 # Colcon build
-colcon build --symlink-install --mixin compile-commands --packages-ignore vesc_ackermann
+$ colcon build --symlink-install --mixin compile-commands --packages-ignore vesc_ackermann
 ```
 
 ## Running
 It is necessary to create the map first, for just mapping, use the following commands:
-```bash
-ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
-ros2 launch cartographer_slam mapping.launch.py
+```console
+$ ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
+$ ros2 launch cartographer_slam mapping.launch.py
 ```
 
 Cartographer searches for the saved map in a specific folder, copy it there first:
-```bash
-auto save_slam track
-cp track.pbstream /home/nvidia/ros2_ws/install/storage/share/storage/stage/world
+```console
+$ auto save_slam track
+$ cp track.pbstream /home/nvidia/ros2_ws/install/storage/share/storage/stage/world
 ```
 
 Then run all required nodes:
-```bash
-ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
-ros2 launch cartographer_slam localization.launch.py map:=track.pbstream
-ros2 launch follow_center_line follow_line.launch.py
+```console
+$ ros2 launch auto auto.ftg.launch.py config:=tx2-auto-usa.yaml
+$ ros2 launch cartographer_slam localization.launch.py map:=track.pbstream
+$ ros2 launch follow_center_line follow_line.launch.py
 ```
 
 After publishing 'False' on topic '/eStop' the car should start moving.
